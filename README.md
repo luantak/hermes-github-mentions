@@ -30,8 +30,11 @@ The examples use Bash. Replace `example-bot` with the bot's GitHub username and
 
 1. **Create the bot token.** Sign in to GitHub as the bot, then open
    **Settings → Developer settings → Personal access tokens → Tokens (classic)**.
-   Create a token with `repo` and `notifications` scopes. Authorize organization
-   SSO if required, and accept any repository invitations as the bot.
+   Select `repo` for repository work and notification polling. Add `workflow` if
+   Hermes should edit GitHub Actions workflow files, and `read:org` for
+   organization and team membership queries. A separate `notifications` scope
+   isn't needed with `repo`. See [GitHub's scope reference](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps).
+   Authorize organization SSO if required, and accept repository invitations as the bot.
    [GitHub's notification API requires a classic token](https://docs.github.com/en/rest/activity/notifications);
    fine-grained tokens and GitHub App tokens do not work here. GitHub.com only.
 
