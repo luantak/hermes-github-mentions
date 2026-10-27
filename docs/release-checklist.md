@@ -2,8 +2,8 @@
 
 The plugin has offline regression coverage and checks through Hermes' real
 validator, Plugin Doctor, discovery, CLI registration, and adapter lifecycle.
-These checks use a temporary
-Hermes home, blocked network access, and fake credentials. A live GitHub-to-agent
+These checks use a temporary Hermes home, blocked network access, and fake
+credentials. A live GitHub-to-agent
 test against a separate Hermes installation is still outstanding.
 
 - Test one issue comment, an inline PR review reply, and a Discussion reply with

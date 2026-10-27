@@ -1,6 +1,6 @@
 """Mention detection, durable handoff, and optional Hermes progress tracking.
 
-Extracted from the original personal watcher. No Hermes modules are imported.
+No Hermes modules are imported.
 """
 
 import base64
@@ -423,17 +423,15 @@ class Watcher:
         with closing(sqlite3.connect(self.session_db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)) as db:
             for key, job in list(active.items()):
                 route = job.get("route", "github-mention-work")
-                # Hermes now encodes (profile, route, delivery) in the chat ID.
-                # Keep the legacy lookup for work accepted before that change.
+                # Hermes encodes (profile, route, delivery) in the chat ID.
                 identity = json.dumps((self.config.profile, route, job["work_id"]),
                                       ensure_ascii=False, separators=(",", ":")).encode()
                 chat_id = "webhook:v2:" + base64.urlsafe_b64encode(identity).decode("ascii").rstrip("=")
-                legacy_id = f"webhook:{route}:{job['work_id']}"
                 row = db.execute(
                     "SELECT id, ended_at, last_activity_at, tool_call_count FROM sessions "
-                    "WHERE chat_id IN (?, ?) OR session_key LIKE ? "
+                    "WHERE chat_id = ? "
                     "ORDER BY started_at DESC LIMIT 1",
-                    (chat_id, legacy_id, f"%{legacy_id}%"),
+                    (chat_id,),
                 ).fetchone()
                 # Some webhook sessions leave ended_at empty after a final response.
                 # Check the latest turn so an earlier reply cannot hide resumed work.
