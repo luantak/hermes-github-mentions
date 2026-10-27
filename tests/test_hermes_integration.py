@@ -13,9 +13,10 @@ import os
 import socket
 import tempfile
 import threading
+import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 @unittest.skipUnless(os.environ.get("HERMES_TEST_ROOT"), "Requires an existing Hermes installation")
@@ -50,6 +51,7 @@ class HermesIntegrationTests(unittest.TestCase):
     def test_real_discovery_cli_settings_and_gateway_lifecycle(self):
         from agent.secret_scope import reset_secret_scope, set_secret_scope
         from gateway.config import GatewayConfig, Platform
+        from gateway.session import SessionSource
         from gateway.platform_registry import platform_registry
         from gateway.status import flush_runtime_status
         from hermes_cli.plugins import PluginManager
@@ -68,12 +70,13 @@ class HermesIntegrationTests(unittest.TestCase):
         command = manager._cli_commands["github-mentions"]
         parser = argparse.ArgumentParser()
         command["setup_fn"](parser)
-        args = parser.parse_args(["configure", "--bot", "helper-bot", "--author", "owner", "--discord-chat-id", "1234"])
+        args = parser.parse_args(["configure", "--bot", "helper-bot", "--author", "owner"])
         with patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(command["handler_fn"](args), 0)
 
         secrets = set_secret_scope({"GITHUB_MENTIONS_TOKEN": "fake-token",
-                                    "GITHUB_MENTIONS_WEBHOOK_SECRET": "s" * 64}, profile_home=str(self.home))
+                                    "GITHUB_MENTIONS_WEBHOOK_SECRET": "s" * 64,
+                                    "DISCORD_ALLOWED_USERS": "111"}, profile_home=str(self.home))
         self.addCleanup(reset_secret_scope, secrets)
         self.addCleanup(flush_runtime_status)
         output_path = self.home / "routes.json"
@@ -106,6 +109,12 @@ class HermesIntegrationTests(unittest.TestCase):
         async def exercise():
             self.assertTrue(await adapter.connect())
             self.assertTrue(await asyncio.to_thread(polled.wait, 2))
+            chat = manager._plugin_commands["github-mentions"]["handler"]
+            source = SessionSource(platform=Platform.DISCORD, chat_id="888", user_id="111")
+            self.assertIn("this channel", chat("set", source=source))
+            self.assertEqual(adapter.runtime.watcher.chat_id_provider(), "888")
+            self.assertIn("home channel", chat("reset", source=source))
+            self.assertEqual(adapter.runtime.watcher.chat_id_provider(), "")
             await adapter.disconnect()
             self.assertFalse(adapter.worker.is_alive())
 
@@ -117,3 +126,28 @@ class HermesIntegrationTests(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO) as output:
             self.assertEqual(command["handler_fn"](args), 0)
         self.assertTrue(json.loads(output.getvalue())["initialized"])
+
+    def test_hermes_resolves_dynamic_destination_and_home_channel(self):
+        from gateway.config import GatewayConfig, HomeChannel, Platform, PlatformConfig
+        from gateway.platforms.base import SendResult
+        from gateway.platforms.webhook import WebhookAdapter
+
+        target = types.SimpleNamespace(send=AsyncMock(return_value=SendResult(success=True)))
+        config = GatewayConfig(platforms={Platform.DISCORD: PlatformConfig(
+            enabled=True, home_channel=HomeChannel(Platform.DISCORD, "5678", "GitHub updates"))})
+        webhook = WebhookAdapter(PlatformConfig())
+        webhook.gateway_runner = types.SimpleNamespace(config=config, _authorization_adapter=lambda *_: target)
+
+        async def exercise():
+            for selected, expected in (("", "5678"), ("9999", "9999"), ("", "5678")):
+                extra = webhook._render_delivery_extra({"chat_id": "{discord_chat_id}"},
+                                                       {"discord_chat_id": selected})
+                result = await webhook._deliver_cross_platform("discord", "update", {"deliver_extra": extra})
+                self.assertTrue(result.success)
+                self.assertEqual(target.send.call_args.args[0], expected)
+            config.platforms[Platform.DISCORD].home_channel = None
+            result = await webhook._deliver_cross_platform("discord", "update", {"deliver_extra": {"chat_id": ""}})
+            self.assertFalse(result.success)
+            self.assertIn("home channel", result.error)
+
+        asyncio.run(exercise())

@@ -27,20 +27,23 @@ publish a conclusive answer. End your private response with the GitHub reply lin
 """
 
 
-def build_routes(config, chat_id, *, secret=None):
-    if not chat_id or not chat_id.isdecimal():
+def build_routes(config, chat_id="", *, secret=None, dynamic_chat_id=False):
+    if not isinstance(chat_id, str) or (chat_id and not chat_id.isdecimal()):
         raise ValueError("Discord chat ID must contain digits")
     secret = (config.secret() if secret is None else secret).decode("ascii")
     work = {
         "secret": secret, "events": ["mention"], "deliver": "discord",
-        "deliver_extra": {"chat_id": chat_id},
         "toolsets": ["terminal", "file", "web", "skills", "todo"], "prompt": PROMPT,
     }
     if config.profile != "default":
         work["profile"] = config.profile
+    target = "{discord_chat_id}" if dynamic_chat_id else chat_id
+    if target:
+        work["deliver_extra"] = {"chat_id": target}
     routes = {config.work_route: dict(work), config.other_route: dict(work)}
-    direct = {"secret": secret, "deliver_only": True, "deliver": "discord",
-              "deliver_extra": {"chat_id": chat_id}}
+    direct = {"secret": secret, "deliver_only": True, "deliver": "discord"}
+    if target:
+        direct["deliver_extra"] = {"chat_id": target}
     if config.profile != "default":
         direct["profile"] = config.profile
     if config.notice_route:

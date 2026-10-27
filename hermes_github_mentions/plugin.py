@@ -20,6 +20,57 @@ def get_settings(ctx):
     return {key: ctx.get_config(key, default=value) for key, value in DEFAULTS.items()}
 
 
+def discord_target(ctx):
+    value = ctx.get_config("discord_chat_id", default="")
+    if not isinstance(value, str) or (value and not value.isdecimal()):
+        raise ValueError("Discord channel override must contain digits")
+    return value
+
+
+def can_set_destination(source):
+    """Require a stable Discord user ID explicitly allowed in the owning profile."""
+    platform = getattr(source, "platform", None)
+    if (source is None or getattr(source, "is_bot", False)
+            or str(getattr(platform, "value", platform)) != "discord"):
+        return False
+    user_id = str(getattr(source, "user_id", "") or "")
+    if not user_id.isdecimal():
+        return False
+    from agent.secret_scope import get_secret
+    from gateway.config import Platform, load_gateway_config
+
+    raw = get_secret("DISCORD_ALLOWED_USERS")
+    if raw is None:
+        config = load_gateway_config().platforms.get(Platform.DISCORD)
+        extra = config.extra if config else {}
+        raw = extra.get("allow_from", extra.get("allowed_users", []))
+    entries = raw.split(",") if isinstance(raw, str) else raw
+    if not isinstance(entries, (list, tuple)):
+        return False
+    allowed = {str(x).strip().removeprefix("<@").removeprefix("!").removesuffix(">") for x in entries}
+    return user_id in allowed
+
+
+def handle_chat_command(ctx, raw_args, *, source=None, **kwargs):
+    action = raw_args.strip().lower() or "status"
+    if action not in ("set", "reset", "status"):
+        return "Use /github-mentions set, reset, or status in Discord."
+    if not can_set_destination(source):
+        return "Run this in Discord as a user explicitly listed in this profile's Discord allowed users."
+    if action == "set":
+        # Source IDs come from the adapter, never from command arguments or display names.
+        chat_id = str(getattr(source, "thread_id", "") or getattr(source, "chat_id", ""))
+        if not chat_id.isdecimal():
+            return "Could not determine this Discord channel."
+        ctx.set_config("discord_chat_id", chat_id)
+        return "GitHub updates will use this channel for new requests and status notices."
+    if action == "reset":
+        ctx.set_config("discord_chat_id", "")
+        return "GitHub updates will use this profile's Discord home channel."
+    target = discord_target(ctx)
+    return f"GitHub updates use <#{target}>." if target else "GitHub updates use this profile's Discord home channel."
+
+
 def make_config(settings, home, data):
     for key in ("allowed_authors", "repositories"):
         if not isinstance(settings[key], list) or any(not isinstance(x, str) for x in settings[key]):
@@ -27,8 +78,8 @@ def make_config(settings, home, data):
     for key in ("bot", "discord_chat_id", "webhook_url", "profile"):
         if not isinstance(settings[key], str):
             raise ValueError(f"{key} must be a string")
-    if not settings["discord_chat_id"].isdecimal():
-        raise ValueError("Configure a Discord channel ID with hermes github-mentions configure")
+    if settings["discord_chat_id"] and not settings["discord_chat_id"].isdecimal():
+        raise ValueError("Discord channel override must contain digits")
     return Config(
         bot=settings["bot"], allowed_authors=tuple(x.lower() for x in settings["allowed_authors"]),
         repositories=tuple(x.lower() for x in settings["repositories"]),
@@ -73,7 +124,8 @@ def setup_parser(parser):
     configure = subs.add_parser("configure", help="Save non-secret settings in Hermes")
     configure.add_argument("--bot", required=True)
     configure.add_argument("--author", action="append", required=True)
-    configure.add_argument("--discord-chat-id", required=True)
+    configure.add_argument("--discord-chat-id", default=None,
+                           help="Override Hermes' Discord home channel; omit to keep the current setting")
     configure.add_argument("--repository", action="append", default=[])
     configure.add_argument("--webhook-url", default=DEFAULTS["webhook_url"])
     configure.add_argument("--profile", default="default")
@@ -93,7 +145,9 @@ def handle_command(ctx, args):
             from hermes_constants import get_hermes_home
 
             settings = {"bot": args.bot, "allowed_authors": args.author,
-                        "discord_chat_id": args.discord_chat_id, "repositories": args.repository,
+                        "discord_chat_id": (args.discord_chat_id if args.discord_chat_id is not None
+                                            else ctx.get_config("discord_chat_id", default="")),
+                        "repositories": args.repository,
                         "webhook_url": args.webhook_url, "profile": args.profile,
                         "poll_seconds": args.poll_seconds, "progress": args.progress}
             home = get_hermes_home()
@@ -110,7 +164,7 @@ def handle_command(ctx, args):
                 raise ValueError("Output already exists; choose a new file")
             if args.output.resolve() == config.state_file.resolve():
                 raise ValueError("Output must be separate from watcher state")
-            routes = build_routes(config, get_settings(ctx)["discord_chat_id"], secret=scoped_secret())
+            routes = build_routes(config, secret=scoped_secret(), dynamic_chat_id=True)
             routes["platforms"]["github_mentions"] = {"enabled": True}
             atomic_write(args.output, json.dumps(routes, indent=2) + "\n")
             print(f"Wrote {args.output}. It contains a webhook secret; keep it private.")
@@ -123,7 +177,8 @@ def handle_command(ctx, args):
             return 0
         from .cli import run
 
-        return run(config, args.once, args.dry_run, token=scoped_token(), secret_provider=scoped_secret)
+        return run(config, args.once, args.dry_run, token=scoped_token(), secret_provider=scoped_secret,
+                   chat_id_provider=lambda: discord_target(ctx))
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         print(f"GitHub mentions: {exc}")
         return 1
@@ -143,3 +198,9 @@ def register(ctx):
         name="github-mentions", help="Configure and inspect the GitHub mention watcher",
         setup_fn=setup_parser, handler_fn=lambda args: handle_command(ctx, args),
     )
+    def chat_command(raw_args, *, source=None, **kwargs):
+        return handle_chat_command(ctx, raw_args, source=source, **kwargs)
+
+    ctx.register_command("github-mentions", handler=chat_command,
+                         description="Choose the Discord destination for GitHub updates",
+                         args_hint="set | reset | status")

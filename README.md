@@ -56,13 +56,12 @@ This plugin does not install Python dependencies or modify Hermes source files.
 It uses Hermes' default `in_process` plugin mode. Hermes' separate plugin-host
 isolation mode cannot run gateway adapters.
 
-Save the requester's accounts and private Discord channel in Hermes settings:
+Save the bot and requester accounts in Hermes settings:
 
 ```bash
 hermes github-mentions configure \
   --bot example-bot \
   --author example-owner \
-  --discord-chat-id 123456789012345678 \
   --repository owner/repo
 ```
 
@@ -71,6 +70,24 @@ repositories in the bot's mention notifications. These settings live under
 `plugins.entries.hermes-github-mentions.settings` in the active profile's config.
 The manifest's `config_schema` also exposes them in Hermes Desktop's plugin
 settings form.
+
+Discord updates use the active Hermes profile's configured Discord home channel.
+To choose a destination for this plugin, run `/github-mentions set` in that
+Discord channel or thread. Use `/github-mentions status` to see the selection,
+or `/github-mentions reset` to return to Hermes' home channel. No channel ID or
+route regeneration is needed for these commands. Only users explicitly listed
+in the active profile's Discord allowed users can change the destination.
+
+The optional `--discord-chat-id CHANNEL_ID` flag also sets the destination.
+Omitted overrides keep their current setting when reconfiguring; pass
+`--discord-chat-id ""` to return to the home channel. Without an override,
+Hermes resolves its configured Discord home channel at delivery time.
+Commands apply to new requests and status notices. Responses to requests already
+running keep the destination selected when the request started.
+
+When upgrading from 0.2.x, export and merge the routes once, then restart the
+gateway to load the updated worker and command. Later channel changes take
+effect without restarting the gateway.
 
 Set these secrets in the active profile through Hermes Desktop's secret fields,
 `hermes config`, or your existing profile secret-management procedure:
@@ -143,11 +160,11 @@ No dependency installation is needed. Run these commands from the project direct
    outside the checkout and readable only by your account. The watcher does not
    import tokens from your live Hermes `.env` file.
 
-3. Generate a private Hermes config fragment with your Discord channel ID.
+3. Generate a private Hermes config fragment. Delivery uses your Hermes profile's
+   Discord home channel; `--discord-chat-id` is an optional override.
 
    ```bash
    python3 -m hermes_github_mentions routes \
-     --discord-chat-id 123456789012345678 \
      --output "$HOME/.config/hermes-github-mentions/hermes-routes.json"
    ```
 
@@ -250,7 +267,7 @@ Tests use temporary files and SQLite databases, fake GitHub responses, and fake
 webhook responses. Unmocked network requests fail. There are no external test
 dependencies. No live Hermes instance or GitHub credentials are needed.
 
-Two additional tests can use an existing Hermes installation for admission,
+Optional integration tests can use an existing Hermes installation for admission,
 Plugin Doctor, real plugin discovery, settings, and adapter startup/shutdown.
 Set `HERMES_TEST_ROOT` and put that source root on `PYTHONPATH`, then use its
 existing Python environment. For this check, `TMPDIR` must be a disk-backed

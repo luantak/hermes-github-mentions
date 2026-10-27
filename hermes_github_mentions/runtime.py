@@ -12,13 +12,14 @@ LOG = logging.getLogger(__name__)
 
 
 class WatcherRuntime:
-    def __init__(self, config, token, secret):
+    def __init__(self, config, token, secret, *, chat_id_provider=None):
         self.config = config
         self.token = token
         self.stop = threading.Event()
         self.ready = threading.Event()
         self.error = None
-        self.watcher = Watcher(config, secret_provider=lambda: secret, should_stop=self.stop.is_set)
+        self.watcher = Watcher(config, secret_provider=lambda: secret, should_stop=self.stop.is_set,
+                               chat_id_provider=chat_id_provider)
 
     def run(self):
         try:

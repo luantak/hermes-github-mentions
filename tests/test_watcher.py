@@ -359,6 +359,33 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(extra["port"], 9123)
         self.assertTrue(all(route["profile"] == "coder" for route in extra["routes"].values()))
 
+    def test_routes_default_to_home_channel_and_native_routes_accept_dynamic_destination(self):
+        config = replace(self.config, progress=True)
+        routes = build_routes(config)["platforms"]["webhook"]["extra"]["routes"]
+        self.assertTrue(all("deliver_extra" not in route for route in routes.values()))
+        dynamic = build_routes(config, dynamic_chat_id=True)["platforms"]["webhook"]["extra"]["routes"]
+        self.assertTrue(all(route["deliver_extra"]["chat_id"] == "{discord_chat_id}" for route in dynamic.values()))
+
+    def test_destination_setting_is_resolved_for_each_post_without_mutating_saved_payload(self):
+        destination = ["888"]
+        watcher = Watcher(self.config, chat_id_provider=lambda: destination[0])
+        payload = {"message": "test", "discord_chat_id": "stale"}
+        with self.fake_network():
+            watcher.post_route("route", "one", payload, self.config.secret())
+            destination[0] = ""
+            watcher.post_route("route", "two", payload, self.config.secret())
+        self.assertEqual([json.loads(call.data)["discord_chat_id"] for call in self.calls], ["888", ""])
+        self.assertEqual(payload["discord_chat_id"], "stale")
+
+    def test_standalone_route_export_does_not_require_channel_id(self):
+        path = self.root / "config.toml"
+        path.write_text('bot="helper-bot"\nallowed_authors=["owner"]\nstate_file="state.json"\nsecret_file="webhook.secret"\n')
+        output = self.root / "routes.json"
+        with patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(main(["--config", str(path), "routes", "--output", str(output)]), 0)
+        routes = json.loads(output.read_text())["platforms"]["webhook"]["extra"]["routes"]
+        self.assertTrue(all("deliver_extra" not in route for route in routes.values()))
+
     def test_cli_status_needs_neither_token_nor_secret(self):
         config_path = self.root / "config.toml"
         config_path.write_text('bot="helper-bot"\nallowed_authors=["owner"]\nstate_file="state.json"\nsecret_file="missing.secret"\n')

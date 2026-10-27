@@ -7,7 +7,7 @@ from gateway.config import Platform
 from gateway.platforms.base import BasePlatformAdapter, SendResult
 
 from .network import request_json
-from .plugin import scoped_config, scoped_secret, scoped_token
+from .plugin import discord_target, scoped_config, scoped_secret, scoped_token
 from .runtime import WatcherRuntime
 
 LOG = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class GitHubMentionsAdapter(BasePlatformAdapter):
             identity, _ = await asyncio.to_thread(request_json, "https://api.github.com/user", token)
             if str(identity.get("login", "")).lower() != config.bot.lower():
                 raise ValueError("GitHub token identity does not match the configured bot")
-            self.runtime = WatcherRuntime(config, token, secret)
+            self.runtime = WatcherRuntime(config, token, secret, chat_id_provider=lambda: discord_target(self.ctx))
             from agent.memory_provider import spawn_context_thread
 
             self.worker = spawn_context_thread(

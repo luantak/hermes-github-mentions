@@ -24,6 +24,7 @@ class Context:
                          "discord_chat_id": "1234"}
         self.platforms = {}
         self.commands = {}
+        self.chat_commands = {}
 
     def get_config(self, key, default=None):
         return self.settings.get(key, default)
@@ -36,6 +37,9 @@ class Context:
 
     def register_cli_command(self, **kwargs):
         self.commands[kwargs["name"]] = kwargs
+
+    def register_command(self, name, **kwargs):
+        self.chat_commands[name] = kwargs
 
 
 class PluginTests(unittest.TestCase):
@@ -75,6 +79,7 @@ class PluginTests(unittest.TestCase):
             module.register(self.ctx)
         self.assertIn("github_mentions", self.ctx.platforms)
         self.assertIn("github-mentions", self.ctx.commands)
+        self.assertIn("github-mentions", self.ctx.chat_commands)
         self.assertTrue(self.ctx.platforms["github_mentions"]["check_fn"]())
         self.assertEqual(list(self.home.iterdir()), [])
 
@@ -125,6 +130,61 @@ class PluginTests(unittest.TestCase):
         with patch.dict(sys.modules, self.modules()), patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(plugin.handle_command(self.ctx, args), 1)
         self.assertEqual(self.ctx.settings["bot"], "helper-bot")
+
+    def test_configure_can_use_home_channel_without_an_id_and_keeps_existing_override(self):
+        parser = argparse.ArgumentParser()
+        plugin.setup_parser(parser)
+        args = parser.parse_args(["configure", "--bot", "helper-bot", "--author", "owner"])
+        self.ctx.settings["discord_chat_id"] = ""
+        with patch.dict(sys.modules, self.modules()), patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(plugin.handle_command(self.ctx, args), 0)
+            self.assertEqual(self.ctx.settings["discord_chat_id"], "")
+            self.ctx.settings["discord_chat_id"] = "888"
+            self.assertEqual(plugin.handle_command(self.ctx, args), 0)
+            self.assertEqual(self.ctx.settings["discord_chat_id"], "888")
+
+    def test_discord_set_and_reset_take_channel_from_authenticated_source(self):
+        source = types.SimpleNamespace(platform="discord", chat_id="888", thread_id=None, user_id="111", is_bot=False)
+        secrets = self.modules()["agent.secret_scope"]
+        secrets.get_secret = lambda _: "111,222"
+        config = types.ModuleType("gateway.config")
+        config.Platform = types.SimpleNamespace(DISCORD="discord")
+        config.load_gateway_config = lambda: types.SimpleNamespace(platforms={})
+        with patch.dict(sys.modules, {"agent.secret_scope": secrets, "gateway.config": config}):
+            self.assertIn("this channel", plugin.handle_chat_command(self.ctx, "set", source=source))
+            self.assertEqual(self.ctx.settings["discord_chat_id"], "888")
+            self.assertIn("<#888>", plugin.handle_chat_command(self.ctx, "status", source=source))
+            source.thread_id = "999"
+            plugin.handle_chat_command(self.ctx, "set", source=source)
+            self.assertEqual(self.ctx.settings["discord_chat_id"], "999")
+            self.assertIn("home channel", plugin.handle_chat_command(self.ctx, "reset", source=source))
+            self.assertEqual(self.ctx.settings["discord_chat_id"], "")
+
+    def test_discord_command_fails_closed_for_missing_bot_and_unlisted_sources(self):
+        secrets = self.modules()["agent.secret_scope"]
+        secrets.get_secret = lambda _: "111"
+        config = types.ModuleType("gateway.config")
+        config.Platform = types.SimpleNamespace(DISCORD="discord")
+        config.load_gateway_config = lambda: types.SimpleNamespace(platforms={})
+        source = types.SimpleNamespace(platform="discord", chat_id="888", user_id="222", is_bot=False)
+        with patch.dict(sys.modules, {"agent.secret_scope": secrets, "gateway.config": config}):
+            for value in (None, source, types.SimpleNamespace(),
+                          types.SimpleNamespace(platform="discord", chat_id="888", user_id="111", is_bot=True)):
+                self.assertIn("explicitly listed", plugin.handle_chat_command(self.ctx, "set", source=value))
+            self.assertEqual(self.ctx.settings["discord_chat_id"], "1234")
+
+    def test_discord_authorization_uses_profile_yaml_when_env_allowlist_is_absent(self):
+        secrets = self.modules()["agent.secret_scope"]
+        secrets.get_secret = lambda _: None
+        config = types.ModuleType("gateway.config")
+        config.Platform = types.SimpleNamespace(DISCORD="discord")
+        config.load_gateway_config = lambda: types.SimpleNamespace(platforms={
+            "discord": types.SimpleNamespace(extra={"allow_from": ["<@111>"]})})
+        source = types.SimpleNamespace(platform="discord", user_id="111", is_bot=False)
+        with patch.dict(sys.modules, {"agent.secret_scope": secrets, "gateway.config": config}):
+            self.assertTrue(plugin.can_set_destination(source))
+            source.user_id = "222"
+            self.assertFalse(plugin.can_set_destination(source))
 
     def test_configure_keeps_existing_bot_state_identity(self):
         with patch.dict(sys.modules, self.modules()):

@@ -78,10 +78,11 @@ class WatcherStopped(RuntimeError):
 
 
 class Watcher:
-    def __init__(self, config, *, secret_provider=None, should_stop=None):
+    def __init__(self, config, *, secret_provider=None, should_stop=None, chat_id_provider=None):
         self.config = config
         self.secret = secret_provider or config.secret
         self.should_stop = should_stop or (lambda: False)
+        self.chat_id_provider = chat_id_provider
         self.mention = re.compile(
             r"(?<![A-Za-z0-9-])@" + re.escape(config.bot) + r"(?![A-Za-z0-9-])", re.IGNORECASE,
         )
@@ -295,6 +296,9 @@ class Watcher:
 
     def post_route(self, route, event_id, payload, secret, event_type="mention"):
         self.check_running()
+        if self.chat_id_provider is not None:
+            # Resolve the plugin setting at delivery time, including for queued work.
+            payload = {**payload, "discord_chat_id": self.chat_id_provider()}
         body = json.dumps(payload, ensure_ascii=False).encode()
         stamp = str(int(time.time()))
         signature = hmac.new(secret, stamp.encode() + b"." + body, hashlib.sha256).hexdigest()

@@ -1,5 +1,5 @@
 name: hermes-github-mentions
-version: 0.2.0
+version: 0.3.0
 manifest_version: 2
 description: Run trusted GitHub mention requests through Hermes, with private Discord updates.
 license: MIT
@@ -31,8 +31,7 @@ config_schema:
   discord_chat_id:
     type: str
     default: ""
-    required: true
-    description: Private Discord channel for notices and agent responses.
+    description: Optional channel override. Use /github-mentions set in Discord, or leave empty for the home channel.
   webhook_url:
     type: str
     default: http://127.0.0.1:8644/webhooks

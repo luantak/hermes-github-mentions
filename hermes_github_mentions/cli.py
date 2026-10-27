@@ -61,12 +61,12 @@ def retry_seconds(exc, minimum):
     return delay
 
 
-def run(config, once=False, dry_run=False, *, token=None, secret_provider=None):
+def run(config, once=False, dry_run=False, *, token=None, secret_provider=None, chat_id_provider=None):
     token = config.token() if token is None else token
     identity, _ = request_json("https://api.github.com/user", token)
     if str(identity.get("login", "")).lower() != config.bot.lower():
         raise ValueError("GitHub token identity does not match the configured bot")
-    watcher = Watcher(config, secret_provider=secret_provider)
+    watcher = Watcher(config, secret_provider=secret_provider, chat_id_provider=chat_id_provider)
     if dry_run:
         state = watcher.load_state()
         watcher.poll(token, state, dry_run=True, bootstrap=not config.state_file.exists())
@@ -114,7 +114,8 @@ def main(argv=None):
     init.add_argument("--bot", required=True)
     init.add_argument("--author", action="append", required=True)
     routes = commands.add_parser("routes", help="Write a private Hermes config fragment")
-    routes.add_argument("--discord-chat-id", required=True)
+    routes.add_argument("--discord-chat-id", default="",
+                        help="Override Hermes' Discord home channel")
     routes.add_argument("--output", type=Path, required=True)
     watch = commands.add_parser("run", help="Poll GitHub and hand requests to Hermes")
     watch.add_argument("--once", action="store_true")
