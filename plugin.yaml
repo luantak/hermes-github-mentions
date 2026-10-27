@@ -1,5 +1,5 @@
 name: hermes-github-mentions
-version: 0.4.1
+version: 0.4.2
 manifest_version: 2
 description: Run trusted GitHub mention requests through Hermes, with optional Discord notifications.
 license: MIT
@@ -9,7 +9,7 @@ provides_tools: []
 provides_hooks: []
 python_dependencies: []
 optional_env:
-  - name: GITHUB_MENTIONS_TOKEN
+  - name: GITHUB_TOKEN
     description: Bot user token with notification and repository access.
   - name: GITHUB_MENTIONS_WEBHOOK_SECRET
     description: Shared ASCII webhook secret of at least 32 characters.
@@ -50,7 +50,7 @@ config_schema:
     description: Optional progress notices through Hermes' internal SQLite schema.
   github_token:
     type: secret
-    env: GITHUB_MENTIONS_TOKEN
+    env: GITHUB_TOKEN
     required: true
     description: Bot user token with notification and relevant repository access.
   webhook_secret:

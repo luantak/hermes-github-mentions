@@ -52,13 +52,12 @@ The examples use Bash. Replace `example-bot` with the bot's GitHub username and
    ```bash
    read -r -s -p "Bot GitHub token: " github_mentions_token
    printf '\n'
-   hermes config set GITHUB_MENTIONS_TOKEN "$github_mentions_token"
    hermes config set GITHUB_TOKEN "$github_mentions_token"
    unset github_mentions_token
    hermes config set GITHUB_MENTIONS_WEBHOOK_SECRET "$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
    ```
 
-   This sets both the polling token and Hermes' GitHub tool identity to the bot.
+   The plugin and Hermes' GitHub tools use the same `GITHUB_TOKEN`.
    The last command creates the shared local webhook secret. Keep it unchanged
    unless rotating it deliberately. Secrets belong to the active Hermes profile;
    Desktop users can also fill the plugin's secret fields there.

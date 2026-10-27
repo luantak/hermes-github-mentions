@@ -10,7 +10,7 @@ from .storage import atomic_write
 from .watcher import Watcher
 
 PLUGIN_ID = "hermes-github-mentions"
-TOKEN_ENV = "GITHUB_MENTIONS_TOKEN"
+TOKEN_ENV = "GITHUB_TOKEN"
 SECRET_ENV = "GITHUB_MENTIONS_WEBHOOK_SECRET"
 DEFAULTS = {"bot": "", "allowed_authors": [], "discord_chat_id": "",
             "webhook_url": "http://127.0.0.1:8644/webhooks", "profile": "default",

@@ -75,7 +75,7 @@ class HermesIntegrationTests(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(command["handler_fn"](args), 0)
 
-        secrets = set_secret_scope({"GITHUB_MENTIONS_TOKEN": "fake-token",
+        secrets = set_secret_scope({"GITHUB_TOKEN": "fake-token",
                                     "GITHUB_MENTIONS_WEBHOOK_SECRET": "s" * 64,
                                     "DISCORD_ALLOWED_USERS": "111"}, profile_home=str(self.home))
         self.addCleanup(reset_secret_scope, secrets)
@@ -106,7 +106,7 @@ class HermesIntegrationTests(unittest.TestCase):
             from agent.secret_scope import get_secret
             from hermes_constants import get_hermes_home
 
-            observed.append((get_hermes_home(), get_secret("GITHUB_MENTIONS_TOKEN")))
+            observed.append((get_hermes_home(), get_secret("GITHUB_TOKEN")))
             polled.set()
             adapter.runtime.stop.set()
             return 60
