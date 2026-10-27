@@ -145,6 +145,40 @@ class HermesIntegrationTests(unittest.TestCase):
         result = asyncio.run(webhook.send("job", "Replied in the GitHub thread.", metadata={"notify": True}))
         self.assertTrue(result.success)
 
+    def test_apply_routes_preserves_existing_config_and_keeps_secret_in_profile_store(self):
+        from agent.secret_scope import reset_secret_scope, set_secret_scope
+        from hermes_cli.config import save_config, require_readable_config_before_write
+        from hermes_github_mentions import plugin
+
+        existing_route = {"secret": "existing-secret", "events": ["mention"], "deliver": "log"}
+        save_config({"terminal": {"timeout": 137}, "platforms": {
+            "discord": {"enabled": True},
+            "webhook": {"routes": {"direct-custom": existing_route},
+                        "extra": {"routes": {"extra-custom": existing_route}}},
+        }})
+        settings = {**plugin.DEFAULTS, "bot": "helper-bot", "allowed_authors": ["owner"]}
+        ctx = types.SimpleNamespace(get_config=lambda key, default=None: settings.get(key, default))
+        scope = set_secret_scope({"GITHUB_MENTIONS_WEBHOOK_SECRET": "s" * 64}, profile_home=str(self.home))
+        self.addCleanup(reset_secret_scope, scope)
+        parser = argparse.ArgumentParser()
+        plugin.setup_parser(parser)
+        args = parser.parse_args(["routes", "--apply"])
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(plugin.handle_command(ctx, args), 0)
+            first = require_readable_config_before_write()
+            self.assertEqual(plugin.handle_command(ctx, args), 0)
+            self.assertEqual(first, require_readable_config_before_write())
+        routes = first["platforms"]["webhook"]["extra"]["routes"]
+        self.assertEqual(routes["direct-custom"], existing_route)
+        self.assertEqual(routes["extra-custom"], existing_route)
+        self.assertEqual(first["terminal"]["timeout"], 137)
+        self.assertTrue(first["platforms"]["discord"]["enabled"])
+        self.assertTrue(first["platforms"]["github_mentions"]["enabled"])
+        self.assertEqual(routes["github-mention-work"]["secret"], "${GITHUB_MENTIONS_WEBHOOK_SECRET}")
+        self.assertNotIn("s" * 64, (self.home / "config.yaml").read_text())
+        self.assertNotIn("s" * 64, output.getvalue())
+        self.assertFalse((self.home / "plugin-data" / plugin.PLUGIN_ID / "state.json").exists())
+
     def test_auto_discord_uses_real_profile_projection_without_borrowing_default(self):
         from datetime import datetime, timezone
         from gateway.config import GatewayConfig, HomeChannel, Platform, PlatformConfig

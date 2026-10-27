@@ -1,6 +1,6 @@
 [project]
 name = "hermes-github-mentions"
-version = "0.4.0"
+version = "0.4.1"
 description = "Summon a self-hosted Hermes agent through GitHub mentions."
 readme = "README.md"
 requires-python = ">=3.11"

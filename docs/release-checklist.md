@@ -3,8 +3,11 @@
 The plugin has offline regression coverage and checks through Hermes' real
 validator, Plugin Doctor, discovery, CLI registration, and adapter lifecycle.
 These checks use a temporary Hermes home, blocked network access, and fake
-credentials. A live GitHub-to-agent
-test against a separate Hermes installation is still outstanding.
+credentials. On October 27, 2026, the native plugin also passed a live commit
+mention test on a local Hermes gateway: an approved user mentioned the bot,
+the plugin delivered the request and an optional Discord notice, and the bot
+posted the requested reply in the original GitHub thread. This does not cover
+every comment type or deployment configuration.
 
 - Test one issue comment, an inline PR review reply, and a Discussion reply with
   a separate bot account and an isolated Hermes home.

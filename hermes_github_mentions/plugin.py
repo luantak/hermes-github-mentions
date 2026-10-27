@@ -178,8 +178,10 @@ def setup_parser(parser):
     configure.add_argument("--profile", default="default")
     configure.add_argument("--poll-seconds", type=int, default=60)
     configure.add_argument("--progress", action="store_true")
-    routes = subs.add_parser("routes", help="Export a private webhook config fragment")
-    routes.add_argument("--output", type=Path, required=True)
+    routes = subs.add_parser("routes", help="Apply or export the plugin's webhook routes")
+    destination = routes.add_mutually_exclusive_group(required=True)
+    destination.add_argument("--output", type=Path, help="Export a private config fragment for review")
+    destination.add_argument("--apply", action="store_true", help="Merge routes into this Hermes profile and enable its adapter")
     run = subs.add_parser("run", help="Run in the foreground without enabling the gateway adapter")
     run.add_argument("--once", action="store_true")
     run.add_argument("--dry-run", action="store_true")
@@ -209,16 +211,32 @@ def handle_command(ctx, args):
             Watcher(config).load_state()
             for key, value in settings.items():
                 ctx.set_config(key, value)
-            print("Saved plugin settings. Configure profile secrets, export routes, and enable the gateway adapter.")
+            print("Saved plugin settings. Set profile secrets, then run: hermes github-mentions routes --apply")
             return 0
         config = scoped_config(ctx)
         if args.github_mentions_command == "routes":
+            routes = build_routes(config, secret=scoped_secret(), dynamic_chat_id=True, dynamic_discord=True)
+            routes["platforms"]["github_mentions"] = {"enabled": True}
+            if args.apply:
+                from hermes_cli.config import require_readable_config_before_write, get_config_path, save_config
+
+                # Include direct routes before the extra.routes overlay takes precedence.
+                # This preserves routes in both Hermes-supported config layouts.
+                existing = require_readable_config_before_write(get_config_path())
+                webhook = existing.get("platforms", {}).get("webhook", {})
+                generated = routes["platforms"]["webhook"]["extra"]["routes"]
+                for route in generated.values():
+                    route["secret"] = "${GITHUB_MENTIONS_WEBHOOK_SECRET}"
+                combined = {**webhook.get("routes", {}), **webhook.get("extra", {}).get("routes", {}),
+                            **generated}
+                routes["platforms"]["webhook"]["extra"]["routes"] = combined
+                save_config(routes, merge_existing=True)
+                print("Saved webhook routes and enabled github_mentions. Restart the Hermes gateway to start polling.")
+                return 0
             if args.output.exists():
                 raise ValueError("Output already exists; choose a new file")
             if args.output.resolve() == config.state_file.resolve():
                 raise ValueError("Output must be separate from watcher state")
-            routes = build_routes(config, secret=scoped_secret(), dynamic_chat_id=True, dynamic_discord=True)
-            routes["platforms"]["github_mentions"] = {"enabled": True}
             atomic_write(args.output, json.dumps(routes, indent=2) + "\n")
             print(f"Wrote {args.output}. It contains a webhook secret; keep it private.")
             return 0
