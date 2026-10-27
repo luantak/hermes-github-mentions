@@ -20,7 +20,8 @@ has access and receives mention notifications.
   [webhooks](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/webhooks).
 - Python 3.11+ on Linux or macOS, and [GitHub CLI](https://cli.github.com/)
   available in Hermes' terminal environment.
-- A separate GitHub bot account with access to the repositories it will work on.
+- A separate, regular GitHub user account for the bot, with its own username
+  and login, and access to the repositories it will work on.
 
 ## Setup
 
@@ -28,7 +29,10 @@ Run these commands on the Hermes host, in the profile that should handle request
 The examples use Bash. Replace `example-bot` with the bot's GitHub username and
 `example-owner` with your own username, without `@`.
 
-1. **Create the bot token.** Sign in to GitHub as the bot, then open
+1. **Create the bot's account and token.** Register a regular GitHub user account
+   dedicated to the bot, or use an existing dedicated account. This account's
+   username is `example-bot` in the commands below; replies will appear under
+   that username. Sign in to that account, then open
    **Settings → Developer settings → Personal access tokens → Tokens (classic)**.
    Select `repo` for repository work and notification polling. Add `workflow` if
    Hermes should edit GitHub Actions workflow files, and `read:org` for
