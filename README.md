@@ -49,13 +49,10 @@ not supported in this first version. Notification polling needs a user identity.
 Install from GitHub and enable the plugin:
 
 ```bash
-hermes plugins install git@github.com:luantak/hermes-github-mentions.git --no-enable
+hermes plugins install luantak/hermes-github-mentions --no-enable
 hermes plugins enable hermes-github-mentions
 ```
 
-The repository is private, so Git needs an account with access. The SSH URL above
-uses your existing GitHub SSH authentication. If you use HTTPS authentication,
-use `https://github.com/luantak/hermes-github-mentions.git` instead.
 This plugin does not install Python dependencies or modify Hermes source files.
 It uses Hermes' default `in_process` plugin mode. Hermes' separate plugin-host
 isolation mode cannot run gateway adapters.
@@ -271,7 +268,7 @@ PYTHONPATH=/path/to/hermes-agent TMPDIR=/path/to/disk-scratch \
 See [native plugin configuration](examples/hermes-plugin.example.yaml) for the
 settings layout. Changes to Hermes' built-in GitHub
 comment adapter and Discord adapter are separate upstream work and are not
-bundled here. See [the release checklist](docs/release-checklist.md) for work left
-before a public release.
+bundled here. See [the release checklist](docs/release-checklist.md) for validation
+and compatibility checks.
 
 MIT licensed. This community project is independent of Nous Research.

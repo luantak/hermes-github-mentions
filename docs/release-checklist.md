@@ -1,9 +1,8 @@
-# Before a public release
+# Release checks
 
-The project is a standalone extraction of a personal watcher. The original
-integration has been used with a live agent. The native plugin has offline
-regression coverage and checks through Hermes' real validator, Plugin Doctor,
-discovery, CLI registration, and adapter lifecycle. These checks use a temporary
+The plugin has offline regression coverage and checks through Hermes' real
+validator, Plugin Doctor, discovery, CLI registration, and adapter lifecycle.
+These checks use a temporary
 Hermes home, blocked network access, and fake credentials. A live GitHub-to-agent
 test against a separate Hermes installation is still outstanding.
 
@@ -14,8 +13,8 @@ test against a separate Hermes installation is still outstanding.
 - Check generated routes on supported Hermes releases and record exact versions.
 - Run the tests on Python 3.12, 3.13, and macOS. Local validation covers Python
   3.11 and 3.14 on Linux, with the native Hermes checks on Python 3.14.
-- Confirm the included GitHub Actions matrix passes after the repository is
-  published. It covers those Python versions on Linux and Python 3.14 on macOS.
+- Confirm the included GitHub Actions matrix passes for the release commit.
+  It covers Python 3.11 through 3.14 on Linux and Python 3.14 on macOS.
 - Review the agent's GitHub identity and public reply behavior in the live smoke
   test. Prompt instructions do not guarantee publishing behavior.
 - Decide whether to replace optional SQLite progress tracking with a supported
