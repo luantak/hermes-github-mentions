@@ -5,6 +5,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import __version__
+
 
 class NoRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -28,7 +30,7 @@ def request_json(url, token, payload=None):
         url, data=json.dumps(payload).encode() if payload is not None else None,
         headers={"Authorization": "Bearer " + token,
                  "Accept": "application/vnd.github+json", "Content-Type": "application/json",
-                 "User-Agent": "hermes-github-mentions/0.1.0", "X-GitHub-Api-Version": "2022-11-28"},
+                 "User-Agent": "hermes-github-mentions/" + __version__, "X-GitHub-Api-Version": "2022-11-28"},
     )
     with open_request(req) as response:
         return json.load(response), response.headers

@@ -1,0 +1,61 @@
+name: hermes-github-mentions
+version: 0.2.0
+manifest_version: 2
+description: Run trusted GitHub mention requests through Hermes, with private Discord updates.
+license: MIT
+homepage: https://github.com/luantak/hermes-github-mentions
+tags: [github, gateway, automation]
+provides_tools: []
+provides_hooks: []
+python_dependencies: []
+optional_env:
+  - name: GITHUB_MENTIONS_TOKEN
+    description: Bot user token with notification and repository access.
+  - name: GITHUB_MENTIONS_WEBHOOK_SECRET
+    description: Shared ASCII webhook secret of at least 32 characters.
+config_schema:
+  bot:
+    type: str
+    default: ""
+    required: true
+    description: GitHub username of the bot account.
+  allowed_authors:
+    type: list
+    default: []
+    required: true
+    description: GitHub usernames allowed to give the bot tasks.
+  repositories:
+    type: list
+    default: []
+    description: Optional owner/repo allowlist. Empty accepts all notified repositories.
+  discord_chat_id:
+    type: str
+    default: ""
+    required: true
+    description: Private Discord channel for notices and agent responses.
+  webhook_url:
+    type: str
+    default: http://127.0.0.1:8644/webhooks
+    description: Local Hermes webhook URL, including the profile prefix when multiplexed.
+  profile:
+    type: str
+    default: default
+    description: Hermes webhook profile name. Match the profile in webhook_url.
+  poll_seconds:
+    type: int
+    default: 60
+    description: Minimum polling interval, at least 60 seconds.
+  progress:
+    type: bool
+    default: false
+    description: Optional progress notices through Hermes' internal SQLite schema.
+  github_token:
+    type: secret
+    env: GITHUB_MENTIONS_TOKEN
+    required: true
+    description: Bot user token with notification and relevant repository access.
+  webhook_secret:
+    type: secret
+    env: GITHUB_MENTIONS_WEBHOOK_SECRET
+    required: true
+    description: Shared ASCII webhook secret, at least 32 characters. Use the same value in generated routes.

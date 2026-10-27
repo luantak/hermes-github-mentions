@@ -27,10 +27,10 @@ publish a conclusive answer. End your private response with the GitHub reply lin
 """
 
 
-def build_routes(config, chat_id):
+def build_routes(config, chat_id, *, secret=None):
     if not chat_id or not chat_id.isdecimal():
         raise ValueError("Discord chat ID must contain digits")
-    secret = config.secret().decode("ascii")
+    secret = (config.secret() if secret is None else secret).decode("ascii")
     work = {
         "secret": secret, "events": ["mention"], "deliver": "discord",
         "deliver_extra": {"chat_id": chat_id},

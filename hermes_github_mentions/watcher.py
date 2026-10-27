@@ -73,20 +73,34 @@ def compact(text, limit):
     return value
 
 
+class WatcherStopped(RuntimeError):
+    """Stop between network requests without advancing the saved cursor."""
+
+
 class Watcher:
-    def __init__(self, config):
+    def __init__(self, config, *, secret_provider=None, should_stop=None):
         self.config = config
+        self.secret = secret_provider or config.secret
+        self.should_stop = should_stop or (lambda: False)
         self.mention = re.compile(
             r"(?<![A-Za-z0-9-])@" + re.escape(config.bot) + r"(?![A-Za-z0-9-])", re.IGNORECASE,
         )
         self.session_db = config.hermes_home / "state.db"
         self.gateway_state = config.hermes_home / "gateway_state.json"
 
+    def check_running(self):
+        if self.should_stop():
+            raise WatcherStopped("Watcher is stopping")
+
+    def request_json(self, *args, **kwargs):
+        self.check_running()
+        return request_json(*args, **kwargs)
+
     def pages(self, url, token, max_pages=10):
         results = []
         headers = None
         for _ in range(max_pages):
-            data, headers = request_json(url, token)
+            data, headers = self.request_json(url, token)
             if not isinstance(data, list):
                 raise ValueError("Expected a GitHub API list")
             results.extend(data)
@@ -168,7 +182,7 @@ class Watcher:
         }
 
     def graphql(self, query, variables, token):
-        data, _ = request_json(f"{API}/graphql", token, {"query": query, "variables": variables})
+        data, _ = self.request_json(f"{API}/graphql", token, {"query": query, "variables": variables})
         if data.get("errors"):
             raise RuntimeError("GitHub discussion query failed: " + json.dumps(data["errors"]))
         return data["data"]
@@ -248,13 +262,13 @@ class Watcher:
                 candidates.extend((review, "review") for review in reviews)
             # New issue/PR bodies can mention the bot directly. The issue's updated_at
             # also changes when comments arrive, so use created_at to avoid old bodies.
-            item, _ = request_json(subject_url, token)
+            item, _ = self.request_json(subject_url, token)
             created = parse_time(item.get("created_at"))
             if created and created >= since:
                 candidates.append((item, kind.rstrip("s")))
         elif subject.get("latest_comment_url"):
             # Other notification types may provide a REST comment URL.
-            item, _ = request_json(subject["latest_comment_url"], token)
+            item, _ = self.request_json(subject["latest_comment_url"], token)
             candidates.append((item, subject.get("type", "comment")))
         return [self.mention_event(item, notification, kind) for item, kind in candidates if self.matches(item, since)]
 
@@ -280,6 +294,7 @@ class Watcher:
             return False
 
     def post_route(self, route, event_id, payload, secret, event_type="mention"):
+        self.check_running()
         body = json.dumps(payload, ensure_ascii=False).encode()
         stamp = str(int(time.time()))
         signature = hmac.new(secret, stamp.encode() + b"." + body, hashlib.sha256).hexdigest()
@@ -328,10 +343,11 @@ class Watcher:
         return True
 
     def poll(self, token, state, dry_run=False, bootstrap=False, allow_work=True):
+        self.check_running()
         started = utc_now()
         cursor = parse_time(state["cursor"])
         since = cursor - timedelta(minutes=5)
-        secret = self.config.secret() if not dry_run else b""
+        secret = self.secret() if not dry_run else b""
         pending = state.setdefault("pending", {})
         active = state.setdefault("active", {})
         delivered = 0
@@ -347,6 +363,7 @@ class Watcher:
         notifications, headers = self.pages(f"{API}/notifications?{query}", token)
         interval = max(self.config.poll_seconds, int(headers.get("X-Poll-Interval", "60")))
         for notification in reversed(notifications):
+            self.check_running()
             for key, payload in self.find_mentions(notification, token, since):
                 if bootstrap and parse_time(payload["changed_at"]) < cursor:
                     continue
@@ -398,7 +415,7 @@ class Watcher:
         if not active:
             return
         now = utc_now()
-        secret = self.config.secret()
+        secret = self.secret()
         with closing(sqlite3.connect(self.session_db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)) as db:
             for key, job in list(active.items()):
                 route = job.get("route", "github-mention-work")

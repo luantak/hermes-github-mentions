@@ -17,7 +17,7 @@ from .config import Config, default_config_path, load_config
 from .network import request_json
 from .routes import build_routes
 from .storage import atomic_write, state_lock
-from .watcher import Watcher
+from .watcher import Watcher, WatcherStopped
 
 LOG = logging.getLogger("hermes-github-mentions")
 
@@ -61,18 +61,19 @@ def retry_seconds(exc, minimum):
     return delay
 
 
-def run(config, once=False, dry_run=False):
-    token = config.token()
+def run(config, once=False, dry_run=False, *, token=None, secret_provider=None):
+    token = config.token() if token is None else token
     identity, _ = request_json("https://api.github.com/user", token)
     if str(identity.get("login", "")).lower() != config.bot.lower():
         raise ValueError("GitHub token identity does not match the configured bot")
-    watcher = Watcher(config)
+    watcher = Watcher(config, secret_provider=secret_provider)
     if dry_run:
         state = watcher.load_state()
         watcher.poll(token, state, dry_run=True, bootstrap=not config.state_file.exists())
         return 0
-    config.secret()
+    watcher.secret()
     stop = threading.Event()
+    watcher.should_stop = stop.is_set
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
     with state_lock(config.state_file):
@@ -86,6 +87,8 @@ def run(config, once=False, dry_run=False):
                 draining = watcher.gateway_draining()
                 interval = watcher.poll(token, state, bootstrap=fresh, allow_work=not draining)
                 fresh = False
+            except WatcherStopped:
+                break
             except (OSError, ValueError, RuntimeError, KeyError) as exc:
                 LOG.error("Mention check failed: %s", exc)
                 if once:
