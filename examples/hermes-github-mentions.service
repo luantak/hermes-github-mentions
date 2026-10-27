@@ -1,0 +1,22 @@
+[Unit]
+Description=Forward trusted GitHub mentions to Hermes
+After=network-online.target hermes-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Change this to your checkout. Python 3.11+ is required.
+WorkingDirectory=%h/src/hermes-github-mentions
+ExecStart=/usr/bin/python3 -m hermes_github_mentions run
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-%h/.config/hermes-github-mentions/credentials.env
+Restart=on-failure
+RestartSec=30
+UMask=0077
+NoNewPrivileges=true
+MemoryMax=128M
+TasksMax=8
+CPUQuota=25%
+
+[Install]
+WantedBy=default.target

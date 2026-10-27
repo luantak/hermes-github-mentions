@@ -1,0 +1,20 @@
+bot = "example-bot"
+allowed_authors = ["example-owner"]
+repositories = []
+
+# Relative paths resolve against this config's directory.
+state_file = "state.json"
+secret_file = "webhook.secret"
+token_env = "GITHUB_TOKEN"
+# token_file = "github-token.secret"
+
+webhook_url = "http://127.0.0.1:8644/webhooks"
+poll_seconds = 60
+progress = false
+hermes_home = "~/.hermes"
+profile = "default"
+
+work_route = "github-mention-work"
+other_route = "github-mention-work-other"
+notice_route = "github-mention-notice" # Set to "" to disable notices.
+progress_route = "github-mention-progress"

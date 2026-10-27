@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.test-tmp/
+.env
+.env.*
+credentials.env
+*.secret
+hermes-routes*.json
+config.toml
+state.json
+state.json.*
+state.db*
+*.log
