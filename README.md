@@ -26,7 +26,7 @@ has access and receives mention notifications.
 
 Run these commands on the Hermes host, in the profile that should handle requests.
 The examples use Bash. Replace `example-bot` with the bot's GitHub username and
-`example-owner` with your own username, without `@`. No agent is needed for setup.
+`example-owner` with your own username, without `@`.
 
 1. **Create the bot token.** Sign in to GitHub as the bot, then open
    **Settings → Developer settings → Personal access tokens → Tokens (classic)**.
