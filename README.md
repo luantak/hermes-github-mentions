@@ -16,7 +16,7 @@ has access and receives mention notifications.
 
 ## Requirements
 
-- Hermes with native directory plugins, gateway adapters, and
+- Hermes 0.22.5 or newer with native directory plugins, gateway adapters, and
   [webhooks](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/webhooks).
 - Python 3.11+ on Linux or macOS, and [GitHub CLI](https://cli.github.com/)
   available in Hermes' terminal environment.
