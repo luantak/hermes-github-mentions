@@ -49,8 +49,7 @@ not supported in this first version. Notification polling needs a user identity.
 Install from GitHub and enable the plugin:
 
 ```bash
-hermes plugins install luantak/hermes-github-mentions --no-enable
-hermes plugins enable hermes-github-mentions
+hermes plugins install luantak/hermes-github-mentions --enable
 ```
 
 This plugin does not install Python dependencies or modify Hermes source files.
