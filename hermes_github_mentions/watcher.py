@@ -78,11 +78,13 @@ class WatcherStopped(RuntimeError):
 
 
 class Watcher:
-    def __init__(self, config, *, secret_provider=None, should_stop=None, chat_id_provider=None):
+    def __init__(self, config, *, secret_provider=None, should_stop=None, chat_id_provider=None,
+                 discord_enabled_provider=None):
         self.config = config
         self.secret = secret_provider or config.secret
         self.should_stop = should_stop or (lambda: False)
         self.chat_id_provider = chat_id_provider
+        self.discord_enabled = discord_enabled_provider or (lambda: config.discord_notifications)
         self.mention = re.compile(
             r"(?<![A-Za-z0-9-])@" + re.escape(config.bot) + r"(?![A-Za-z0-9-])", re.IGNORECASE,
         )
@@ -239,9 +241,6 @@ class Watcher:
     def find_mentions(self, notification, token, since):
         if notification.get("reason") != "mention":
             return []
-        repo = notification["repository"]["full_name"].lower()
-        if self.config.repositories and repo not in self.config.repositories:
-            return []
         subject = notification.get("subject") or {}
         subject_url = subject.get("url") or ""
         match = SUBJECT.fullmatch(subject_url)
@@ -296,7 +295,9 @@ class Watcher:
 
     def post_route(self, route, event_id, payload, secret, event_type="mention"):
         self.check_running()
-        if self.chat_id_provider is not None:
+        discord_route = route in (self.config.notice_route, self.config.progress_route,
+                                   self.config.work_route + "-discord", self.config.other_route + "-discord")
+        if discord_route and self.chat_id_provider is not None and "discord_chat_id" not in payload:
             # Resolve the plugin setting at delivery time, including for queued work.
             payload = {**payload, "discord_chat_id": self.chat_id_provider()}
         body = json.dumps(payload, ensure_ascii=False).encode()
@@ -320,14 +321,24 @@ class Watcher:
         """Accept one saved mention for agent work, then record it atomically."""
         if payload["author"].lower() not in self.config.allowed_authors:
             raise ValueError("Queued request author is no longer allowed")
-        if self.config.repositories and payload["repo"].lower() not in self.config.repositories:
-            raise ValueError("Queued request repository is no longer allowed")
         seen = state["seen"].setdefault(key, {})
         if "github-mention-work" in seen:
             state.setdefault("pending", {}).pop(key, None)
             return False
         work_route = (self.config.work_route if payload["issue_number"]
                       else self.config.other_route)
+        if "_work_route" not in payload:
+            if self.discord_enabled():
+                work_route += "-discord"
+            # Retries must keep the route and destination even if settings change
+            # after a POST succeeds but its acknowledgement is lost.
+            payload["_work_route"] = work_route
+            if work_route in (self.config.work_route + "-discord", self.config.other_route + "-discord") \
+                    and self.chat_id_provider is not None:
+                payload["discord_chat_id"] = self.chat_id_provider()
+            state.setdefault("pending", {})[key] = payload
+            self.save_state(state)
+        work_route = payload["_work_route"]
         work_id = hashlib.sha256((key + "github-mention-work").encode()).hexdigest()
         self.post_route(work_route, work_id, payload, secret)
         accepted_at = iso(utc_now())
@@ -340,7 +351,8 @@ class Watcher:
             "started": accepted_at,
             "last_reported": None,
         }
-        if self.config.progress:
+        if self.config.progress and work_route in (self.config.work_route + "-discord",
+                                                  self.config.other_route + "-discord"):
             state.setdefault("active", {})[key] = job
         state.setdefault("pending", {}).pop(key, None)
         self.save_state(state)
@@ -385,16 +397,23 @@ class Watcher:
                     started_now = self.start_work(state, key, payload, secret)
                     delivered += int(started_now)
                 notice_sent = False
-                if self.config.notice_route and "github-mention-notice" not in seen:
+                if not self.discord_enabled():
+                    seen.setdefault("github-mention-notice", iso(utc_now()))
+                elif self.config.notice_route and "github-mention-notice" not in seen:
                     # After work is accepted, one Discord message covers both the
                     # mention and the start. During gateway drain it only announces
                     # the mention; the work route is retried later.
                     payload["notice"] = self.format_message("started" if allow_work else "mention", payload)
                     event_id = hashlib.sha256((key + "github-mention-notice").encode()).hexdigest()
-                    self.post_route(self.config.notice_route, event_id, payload, secret)
+                    try:
+                        self.post_route(self.config.notice_route, event_id, payload, secret)
+                        notice_sent = True
+                    except WatcherStopped:
+                        raise
+                    except (OSError, ValueError, RuntimeError) as exc:
+                        LOG.warning("Optional Discord notice failed: %s", exc)
                     seen["github-mention-notice"] = iso(utc_now())
                     self.save_state(state)
-                    notice_sent = True
                 if not allow_work:
                     continue
                 if started_now and notice_sent and key in active:
@@ -413,7 +432,7 @@ class Watcher:
 
     def report_active(self, state):
         """Show bounded progress for webhook jobs, whose native tool progress is disabled."""
-        if not self.config.progress:
+        if not self.config.progress or not self.discord_enabled():
             return
         active = state.get("active") or {}
         if not active:

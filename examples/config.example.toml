@@ -1,6 +1,5 @@
 bot = "example-bot"
 allowed_authors = ["example-owner"]
-repositories = []
 
 # Relative paths resolve against this config's directory.
 state_file = "state.json"
@@ -10,6 +9,7 @@ token_env = "GITHUB_TOKEN"
 
 webhook_url = "http://127.0.0.1:8644/webhooks"
 poll_seconds = 60
+discord_notifications = false
 progress = false
 hermes_home = "~/.hermes"
 profile = "default"

@@ -8,6 +8,8 @@ test against a separate Hermes installation is still outstanding.
 
 - Test one issue comment, an inline PR review reply, and a Discussion reply with
   a separate bot account and an isolated Hermes home.
+- Run with Discord entirely unconfigured, then test optional Discord notifications
+  separately. A failed Discord notice must not block GitHub work.
 - Exercise a gateway restart while a request is queued, then check recovery and
   that the agent posts one final reply.
 - Check generated routes on supported Hermes releases and record exact versions.

@@ -51,6 +51,7 @@ class HermesIntegrationTests(unittest.TestCase):
     def test_real_discovery_cli_settings_and_gateway_lifecycle(self):
         from agent.secret_scope import reset_secret_scope, set_secret_scope
         from gateway.config import GatewayConfig, Platform
+        from gateway.platforms.webhook import WebhookAdapter
         from gateway.session import SessionSource
         from gateway.platform_registry import platform_registry
         from gateway.status import flush_runtime_status
@@ -86,6 +87,12 @@ class HermesIntegrationTests(unittest.TestCase):
         settings = hermes_yaml.safe_load((self.home / "config.yaml").read_text())
         settings["platforms"] = json.loads(output_path.read_text())["platforms"]
         gateway_config = GatewayConfig.from_dict(settings)
+        self.assertNotIn(Platform.DISCORD, gateway_config.platforms)
+        work_routes = json.loads(output_path.read_text())["platforms"]["webhook"]["extra"]["routes"]
+        self.assertEqual(work_routes["github-mention-work"]["deliver"], "log")
+        webhook = WebhookAdapter(gateway_config.platforms[Platform.WEBHOOK])
+        for name, route in work_routes.items():
+            webhook._validate_route(name, route)
         adapter_config = gateway_config.platforms[Platform("github_mentions")]
         self.assertTrue(adapter_config.enabled)
         entry = platform_registry.get("github_mentions")
@@ -113,8 +120,10 @@ class HermesIntegrationTests(unittest.TestCase):
             source = SessionSource(platform=Platform.DISCORD, chat_id="888", user_id="111")
             self.assertIn("this channel", chat("set", source=source))
             self.assertEqual(adapter.runtime.watcher.chat_id_provider(), "888")
+            self.assertFalse(adapter.runtime.watcher.discord_enabled())  # Discord is not configured.
             self.assertIn("home channel", chat("reset", source=source))
             self.assertEqual(adapter.runtime.watcher.chat_id_provider(), "")
+            self.assertFalse(adapter.runtime.watcher.discord_enabled())
             await adapter.disconnect()
             self.assertFalse(adapter.worker.is_alive())
 
@@ -126,6 +135,34 @@ class HermesIntegrationTests(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO) as output:
             self.assertEqual(command["handler_fn"](args), 0)
         self.assertTrue(json.loads(output.getvalue())["initialized"])
+
+    def test_github_only_work_route_can_finish_without_a_discord_adapter(self):
+        from gateway.config import PlatformConfig
+        from gateway.platforms.webhook import WebhookAdapter
+
+        webhook = WebhookAdapter(PlatformConfig())
+        webhook._delivery_info = {"job": {"deliver": "log", "deliver_extra": {}}}
+        result = asyncio.run(webhook.send("job", "Replied in the GitHub thread.", metadata={"notify": True}))
+        self.assertTrue(result.success)
+
+    def test_auto_discord_uses_real_profile_projection_without_borrowing_default(self):
+        from datetime import datetime, timezone
+        from gateway.config import GatewayConfig, HomeChannel, Platform, PlatformConfig
+        from gateway.status import GatewayLiveness
+        from hermes_github_mentions.plugin import discord_available
+
+        ctx = types.SimpleNamespace(get_config=lambda key, default=None: "coder" if key == "profile" else default)
+        config = GatewayConfig(platforms={Platform.DISCORD: PlatformConfig(
+            enabled=True, home_channel=HomeChannel(Platform.DISCORD, "5678", "GitHub updates"))})
+        snapshot = {"updated_at": datetime.now(timezone.utc).isoformat(), "platforms": {
+            "discord": {"state": "connected"}, "coder:discord": {"state": "disconnected"}}}
+        live = GatewayLiveness(running=True, pid=123, source="multiplexer", runtime=snapshot)
+        with patch("gateway.config.load_gateway_config", return_value=config), \
+                patch("gateway.status.resolve_gateway_liveness", return_value=live) as probe:
+            self.assertFalse(discord_available(ctx))
+            snapshot["platforms"]["coder:discord"]["state"] = "connected"
+            self.assertTrue(discord_available(ctx))
+        self.assertEqual(probe.call_args.kwargs["profile_dir"], self.home)
 
     def test_hermes_resolves_dynamic_destination_and_home_channel(self):
         from gateway.config import GatewayConfig, HomeChannel, Platform, PlatformConfig

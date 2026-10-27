@@ -1,6 +1,7 @@
 """Native Hermes settings and CLI registration; imports no Hermes code at registration."""
 
 import json
+import logging
 from pathlib import Path
 
 from .config import Config
@@ -11,9 +12,11 @@ from .watcher import Watcher
 PLUGIN_ID = "hermes-github-mentions"
 TOKEN_ENV = "GITHUB_MENTIONS_TOKEN"
 SECRET_ENV = "GITHUB_MENTIONS_WEBHOOK_SECRET"
-DEFAULTS = {"bot": "", "allowed_authors": [], "repositories": [], "discord_chat_id": "",
+DEFAULTS = {"bot": "", "allowed_authors": [], "discord_chat_id": "",
             "webhook_url": "http://127.0.0.1:8644/webhooks", "profile": "default",
-            "poll_seconds": 60, "progress": False}
+            "poll_seconds": 60, "discord_notifications": True, "progress": False}
+
+LOG = logging.getLogger(__name__)
 
 
 def get_settings(ctx):
@@ -25,6 +28,41 @@ def discord_target(ctx):
     if not isinstance(value, str) or (value and not value.isdecimal()):
         raise ValueError("Discord channel override must contain digits")
     return value
+
+
+def discord_notifications(ctx):
+    value = ctx.get_config("discord_notifications", default=True)
+    if type(value) is not bool:
+        raise ValueError("discord_notifications must be true or false")
+    return value
+
+
+def discord_available(ctx):
+    """Use only this profile's connected Discord adapter and configured destination."""
+    if not discord_notifications(ctx):
+        return False
+    from gateway.config import Platform, load_gateway_config
+    from gateway.status import (profile_platforms_from_multiplexer, read_runtime_status,
+                                resolve_gateway_liveness, runtime_status_is_stale)
+    from hermes_constants import get_hermes_home
+
+    try:
+        config = load_gateway_config().platforms.get(Platform.DISCORD)
+        if not config or not config.enabled or not (discord_target(ctx) or config.home_channel):
+            return False
+        home = get_hermes_home()
+        live = resolve_gateway_liveness(profile_dir=home)
+        if not live.running:
+            return False
+        status = live.runtime or read_runtime_status(home / "gateway_state.json")
+        if runtime_status_is_stale(status):
+            return False
+        platforms = (profile_platforms_from_multiplexer(status, ctx.get_config("profile", default="default"))
+                     if live.source == "multiplexer" else (status or {}).get("platforms", {}))
+        return platforms.get("discord", {}).get("state") == "connected"
+    except (OSError, ValueError, RuntimeError) as exc:
+        LOG.warning("Discord availability check failed; keeping replies on GitHub: %s", exc)
+        return False
 
 
 def can_set_destination(source):
@@ -63,18 +101,23 @@ def handle_chat_command(ctx, raw_args, *, source=None, **kwargs):
         if not chat_id.isdecimal():
             return "Could not determine this Discord channel."
         ctx.set_config("discord_chat_id", chat_id)
-        return "GitHub updates will use this channel for new requests and status notices."
+        ctx.set_config("discord_notifications", True)
+        return "Discord notifications enabled in this channel for new GitHub requests and status notices."
     if action == "reset":
         ctx.set_config("discord_chat_id", "")
-        return "GitHub updates will use this profile's Discord home channel."
+        ctx.set_config("discord_notifications", True)
+        return "Discord will use this profile's home channel when available; replies always stay on GitHub."
+    if not discord_notifications(ctx):
+        return "Discord notifications are disabled. GitHub requests and replies continue on GitHub."
     target = discord_target(ctx)
-    return f"GitHub updates use <#{target}>." if target else "GitHub updates use this profile's Discord home channel."
+    return (f"Discord uses <#{target}> when available; replies always stay on GitHub." if target
+            else "Discord uses this profile's home channel when available; replies always stay on GitHub.")
 
 
 def make_config(settings, home, data):
-    for key in ("allowed_authors", "repositories"):
-        if not isinstance(settings[key], list) or any(not isinstance(x, str) for x in settings[key]):
-            raise ValueError(f"{key} must be a list of strings")
+    if not isinstance(settings["allowed_authors"], list) \
+            or any(not isinstance(x, str) for x in settings["allowed_authors"]):
+        raise ValueError("allowed_authors must be a list of strings")
     for key in ("bot", "discord_chat_id", "webhook_url", "profile"):
         if not isinstance(settings[key], str):
             raise ValueError(f"{key} must be a string")
@@ -82,10 +125,10 @@ def make_config(settings, home, data):
         raise ValueError("Discord channel override must contain digits")
     return Config(
         bot=settings["bot"], allowed_authors=tuple(x.lower() for x in settings["allowed_authors"]),
-        repositories=tuple(x.lower() for x in settings["repositories"]),
         state_file=data / "state.json", secret_file=data / "unused.secret",
         webhook_url=settings["webhook_url"], poll_seconds=settings["poll_seconds"],
         progress=settings["progress"], hermes_home=home, profile=settings["profile"],
+        discord_notifications=settings["discord_notifications"],
     )
 
 
@@ -126,7 +169,11 @@ def setup_parser(parser):
     configure.add_argument("--author", action="append", required=True)
     configure.add_argument("--discord-chat-id", default=None,
                            help="Override Hermes' Discord home channel; omit to keep the current setting")
-    configure.add_argument("--repository", action="append", default=[])
+    discord = configure.add_mutually_exclusive_group()
+    discord.add_argument("--discord", dest="discord_notifications", action="store_true", default=None,
+                         help="Use Discord automatically when connected and a destination is configured")
+    discord.add_argument("--no-discord", dest="discord_notifications", action="store_false", default=None,
+                         help="Disable Discord notifications; keep GitHub requests and replies")
     configure.add_argument("--webhook-url", default=DEFAULTS["webhook_url"])
     configure.add_argument("--profile", default="default")
     configure.add_argument("--poll-seconds", type=int, default=60)
@@ -144,12 +191,18 @@ def handle_command(ctx, args):
         if args.github_mentions_command == "configure":
             from hermes_constants import get_hermes_home
 
+            enabled = (args.discord_notifications if args.discord_notifications is not None
+                       else discord_notifications(ctx))
+            if args.discord_chat_id:
+                if args.discord_notifications is False:
+                    raise ValueError("A Discord channel override cannot be combined with --no-discord")
+                enabled = True
             settings = {"bot": args.bot, "allowed_authors": args.author,
                         "discord_chat_id": (args.discord_chat_id if args.discord_chat_id is not None
                                             else ctx.get_config("discord_chat_id", default="")),
-                        "repositories": args.repository,
                         "webhook_url": args.webhook_url, "profile": args.profile,
-                        "poll_seconds": args.poll_seconds, "progress": args.progress}
+                        "poll_seconds": args.poll_seconds, "progress": args.progress,
+                        "discord_notifications": enabled}
             home = get_hermes_home()
             config = make_config(settings, home, home / "plugin-data" / PLUGIN_ID)
             # Reconfiguration must not reset the existing cursor or change its identity.
@@ -164,7 +217,7 @@ def handle_command(ctx, args):
                 raise ValueError("Output already exists; choose a new file")
             if args.output.resolve() == config.state_file.resolve():
                 raise ValueError("Output must be separate from watcher state")
-            routes = build_routes(config, secret=scoped_secret(), dynamic_chat_id=True)
+            routes = build_routes(config, secret=scoped_secret(), dynamic_chat_id=True, dynamic_discord=True)
             routes["platforms"]["github_mentions"] = {"enabled": True}
             atomic_write(args.output, json.dumps(routes, indent=2) + "\n")
             print(f"Wrote {args.output}. It contains a webhook secret; keep it private.")
@@ -172,13 +225,15 @@ def handle_command(ctx, args):
         if args.github_mentions_command == "status":
             state = Watcher(config).load_state()
             print(json.dumps({"initialized": config.state_file.exists(), "cursor": state["cursor"],
+                              "discord_notifications": discord_notifications(ctx),
                               **{key: len(state.get(key, {})) for key in ("seen", "pending", "active")},
                               "state_file": str(config.state_file)}, indent=2))
             return 0
         from .cli import run
 
         return run(config, args.once, args.dry_run, token=scoped_token(), secret_provider=scoped_secret,
-                   chat_id_provider=lambda: discord_target(ctx))
+                   chat_id_provider=lambda: discord_target(ctx),
+                   discord_enabled_provider=lambda: discord_available(ctx))
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         print(f"GitHub mentions: {exc}")
         return 1

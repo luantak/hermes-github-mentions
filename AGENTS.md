@@ -9,7 +9,8 @@ the watcher. The plugin and adapter modules use documented Hermes APIs.
   must live on disk, not a memory-backed filesystem.
 - Preserve saved requests and cursor behavior when changing polling or delivery.
   Add behavior tests for changes that can lose or duplicate requests.
-- Keep author checks and the optional repository allowlist before agent work.
+- Keep author approval checks before agent work. Do not restrict approved
+  mentions to a configured list of repositories.
 - Database progress tracking is optional and must not block mention admission.
 - Plugin registration must not start workers, read secrets, or create state.
   The gateway adapter owns the context-bound worker's startup and shutdown.

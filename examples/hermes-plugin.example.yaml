@@ -9,8 +9,8 @@ plugins:
       settings:
         bot: example-bot
         allowed_authors: [example-owner]
-        repositories: [owner/repo]
-        # Run /github-mentions set in Discord to choose a channel, or override here.
+        discord_notifications: true # Use Discord when available; otherwise GitHub only.
+        # Optional: /github-mentions set chooses the Discord channel.
         # discord_chat_id: "123456789012345678"
         webhook_url: http://127.0.0.1:8644/webhooks
         profile: default

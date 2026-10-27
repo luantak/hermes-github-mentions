@@ -1,7 +1,7 @@
 name: hermes-github-mentions
-version: 0.3.0
+version: 0.4.0
 manifest_version: 2
-description: Run trusted GitHub mention requests through Hermes, with private Discord updates.
+description: Run trusted GitHub mention requests through Hermes, with optional Discord notifications.
 license: MIT
 homepage: https://github.com/luantak/hermes-github-mentions
 tags: [github, gateway, automation]
@@ -24,14 +24,14 @@ config_schema:
     default: []
     required: true
     description: GitHub usernames allowed to give the bot tasks.
-  repositories:
-    type: list
-    default: []
-    description: Optional owner/repo allowlist. Empty accepts all notified repositories.
   discord_chat_id:
     type: str
     default: ""
-    description: Optional channel override. Use /github-mentions set in Discord, or leave empty for the home channel.
+    description: Optional channel override when Discord notifications are enabled.
+  discord_notifications:
+    type: bool
+    default: true
+    description: Use Discord when connected and a destination is configured; otherwise keep replies on GitHub.
   webhook_url:
     type: str
     default: http://127.0.0.1:8644/webhooks

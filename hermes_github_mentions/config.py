@@ -9,7 +9,6 @@ from urllib.parse import urlsplit
 
 LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
 ROUTE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}")
-REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
 @dataclass(frozen=True)
@@ -18,7 +17,6 @@ class Config:
     allowed_authors: tuple[str, ...]
     state_file: Path
     secret_file: Path
-    repositories: tuple[str, ...] = ()
     webhook_url: str = "http://127.0.0.1:8644/webhooks"
     token_env: str = "GITHUB_TOKEN"
     token_file: Path | None = None
@@ -27,6 +25,7 @@ class Config:
     notice_route: str = "github-mention-notice"
     progress_route: str = "github-mention-progress"
     poll_seconds: int = 60
+    discord_notifications: bool = False
     progress: bool = False
     hermes_home: Path = field(default_factory=lambda: Path.home() / ".hermes")
     profile: str = "default"
@@ -36,15 +35,16 @@ class Config:
             raise ValueError("bot must be a GitHub username")
         if not self.allowed_authors or any(not LOGIN.fullmatch(x) for x in self.allowed_authors):
             raise ValueError("allowed_authors must contain GitHub usernames")
-        if any(not REPO.fullmatch(x) for x in self.repositories):
-            raise ValueError("repositories must contain owner/repo names")
         for name in ("work_route", "other_route", "notice_route", "progress_route"):
             value = getattr(self, name)
             if not value and name == "notice_route":
                 continue
             if not ROUTE.fullmatch(value):
                 raise ValueError(f"Invalid {name}")
-        routes = [self.work_route, self.other_route, self.progress_route]
+        derived_routes = [self.work_route + "-discord", self.other_route + "-discord"]
+        if any(not ROUTE.fullmatch(name) for name in derived_routes):
+            raise ValueError("Work route names must leave room for the -discord suffix")
+        routes = [self.work_route, self.other_route, self.progress_route, *derived_routes]
         if self.notice_route:
             routes.append(self.notice_route)
         if len(set(routes)) != len(routes):
@@ -63,6 +63,8 @@ class Config:
             raise ValueError("poll_seconds must be an integer of at least 60")
         if type(self.progress) is not bool:
             raise ValueError("progress must be true or false")
+        if type(self.discord_notifications) is not bool:
+            raise ValueError("discord_notifications must be true or false")
 
     def token(self):
         value = os.environ.get(self.token_env, "").strip()
@@ -95,11 +97,11 @@ def load_config(path):
                  "progress_route", "profile"):
         if name in data and not isinstance(data[name], str):
             raise ValueError(f"{name} must be a string")
-    for name in ("allowed_authors", "repositories"):
-        if name in data:
-            if not isinstance(data[name], list) or any(not isinstance(x, str) for x in data[name]):
-                raise ValueError(f"{name} must be an array of strings")
-            data[name] = tuple(x.lower() for x in data[name])
+    if "allowed_authors" in data:
+        authors = data["allowed_authors"]
+        if not isinstance(authors, list) or any(not isinstance(x, str) for x in authors):
+            raise ValueError("allowed_authors must be an array of strings")
+        data["allowed_authors"] = tuple(x.lower() for x in authors)
     for name in ("state_file", "secret_file", "token_file", "hermes_home"):
         if name in data:
             if not isinstance(data[name], str) or not data[name]:

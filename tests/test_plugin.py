@@ -108,11 +108,10 @@ class PluginTests(unittest.TestCase):
         parser = argparse.ArgumentParser()
         plugin.setup_parser(parser)
         args = parser.parse_args(["configure", "--bot", "new-bot", "--author", "requester",
-                                  "--discord-chat-id", "999", "--repository", "org/repo"])
+                                  "--discord-chat-id", "999"])
         with patch.dict(sys.modules, self.modules()), patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(plugin.handle_command(self.ctx, args), 0)
             self.assertEqual(self.ctx.settings["bot"], "new-bot")
-            self.assertEqual(self.ctx.settings["repositories"], ["org/repo"])
             output = self.home / "routes.json"
             args = parser.parse_args(["routes", "--output", str(output)])
             self.assertEqual(plugin.handle_command(self.ctx, args), 0)
@@ -159,6 +158,68 @@ class PluginTests(unittest.TestCase):
             self.assertEqual(self.ctx.settings["discord_chat_id"], "999")
             self.assertIn("home channel", plugin.handle_chat_command(self.ctx, "reset", source=source))
             self.assertEqual(self.ctx.settings["discord_chat_id"], "")
+            self.assertTrue(self.ctx.settings["discord_notifications"])
+
+    def test_discord_is_automatic_only_for_a_connected_profile_with_a_destination(self):
+        modules = self.modules()
+        config = types.ModuleType("gateway.config")
+        config.Platform = types.SimpleNamespace(DISCORD="discord")
+        platform = types.SimpleNamespace(enabled=True, home_channel="configured-home")
+        config.load_gateway_config = lambda: types.SimpleNamespace(platforms={"discord": platform})
+        status = types.ModuleType("gateway.status")
+        live = types.SimpleNamespace(running=True, source="pid", runtime=None)
+        snapshot = {"platforms": {"discord": {"state": "connected"}}}
+        status.resolve_gateway_liveness = lambda **kwargs: live
+        status.read_runtime_status = lambda path: snapshot
+        status.runtime_status_is_stale = lambda value: False
+        status.profile_platforms_from_multiplexer = lambda value, profile: {}
+        modules.update({"gateway.config": config, "gateway.status": status})
+        self.ctx.settings["discord_chat_id"] = ""
+        with patch.dict(sys.modules, modules):
+            self.assertTrue(plugin.discord_available(self.ctx))
+            snapshot["platforms"]["discord"]["state"] = "disconnected"
+            self.assertFalse(plugin.discord_available(self.ctx))
+            snapshot["platforms"]["discord"]["state"] = "connected"
+            platform.home_channel = None
+            self.assertFalse(plugin.discord_available(self.ctx))
+            self.ctx.settings["discord_chat_id"] = "999"
+            self.assertTrue(plugin.discord_available(self.ctx))
+            live.running = False
+            self.assertFalse(plugin.discord_available(self.ctx))
+            live.running = True
+            self.ctx.settings["discord_notifications"] = False
+            self.assertFalse(plugin.discord_available(self.ctx))
+
+    def test_discord_auto_detection_does_not_borrow_another_multiplex_profile(self):
+        modules = self.modules()
+        config = types.ModuleType("gateway.config")
+        config.Platform = types.SimpleNamespace(DISCORD="discord")
+        config.load_gateway_config = lambda: types.SimpleNamespace(platforms={
+            "discord": types.SimpleNamespace(enabled=True, home_channel="home")})
+        status = types.ModuleType("gateway.status")
+        snapshot = {"default": {"discord": {"state": "connected"}},
+                    "coder": {"discord": {"state": "disconnected"}}}
+        status.resolve_gateway_liveness = lambda **kwargs: types.SimpleNamespace(
+            running=True, source="multiplexer", runtime=snapshot)
+        status.read_runtime_status = lambda path: self.fail("Named profile must use its multiplexer snapshot")
+        status.runtime_status_is_stale = lambda value: False
+        status.profile_platforms_from_multiplexer = lambda value, profile: value[profile]
+        modules.update({"gateway.config": config, "gateway.status": status})
+        self.ctx.settings["profile"] = "coder"
+        with patch.dict(sys.modules, modules):
+            self.assertFalse(plugin.discord_available(self.ctx))
+            snapshot["coder"]["discord"]["state"] = "connected"
+            self.assertTrue(plugin.discord_available(self.ctx))
+
+    def test_configure_can_explicitly_disable_and_restore_automatic_discord(self):
+        parser = argparse.ArgumentParser()
+        plugin.setup_parser(parser)
+        base = ["configure", "--bot", "helper-bot", "--author", "owner"]
+        with patch.dict(sys.modules, self.modules()), patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(plugin.handle_command(self.ctx, parser.parse_args(base + ["--no-discord"])), 0)
+            self.assertFalse(self.ctx.settings["discord_notifications"])
+            self.assertEqual(plugin.handle_command(self.ctx, parser.parse_args(base + ["--discord"])), 0)
+            self.assertTrue(self.ctx.settings["discord_notifications"])
 
     def test_discord_command_fails_closed_for_missing_bot_and_unlisted_sources(self):
         secrets = self.modules()["agent.secret_scope"]

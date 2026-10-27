@@ -43,7 +43,8 @@ class WatcherTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.config = Config(bot="helper-bot", allowed_authors=("owner",),
                              state_file=self.root / "state.json",
-                             secret_file=self.root / "webhook.secret", hermes_home=self.root)
+                             secret_file=self.root / "webhook.secret", hermes_home=self.root,
+                             discord_notifications=True)
         self.config.secret_file.write_text("s" * 64)
         self.watcher = Watcher(self.config)
         self.now = datetime(2026, 10, 27, 12, tzinfo=timezone.utc)
@@ -93,11 +94,20 @@ class WatcherTests(unittest.TestCase):
                 item = {**self.item, "body": text, "user": {"login": author}}
                 self.assertEqual(self.watcher.matches(item, self.now - timedelta(minutes=1)), expected)
 
-    def test_repository_allowlist_filters_before_fetching_comments(self):
-        watcher = Watcher(replace(self.config, repositories=("another/repo",)))
-        with patch("hermes_github_mentions.watcher.request_json") as request:
-            self.assertEqual(watcher.find_mentions(self.notification, "fake", self.now), [])
-        request.assert_not_called()
+    def test_approved_mentions_are_accepted_across_repositories(self):
+        for repo in ("team/project", "unrelated/project"):
+            notification = copy.deepcopy(self.notification)
+            notification["repository"]["full_name"] = repo
+            notification["subject"]["url"] = f"https://api.github.com/repos/{repo}/pulls/42"
+            self.item["html_url"] = f"https://github.com/{repo}/pull/42#issuecomment-123"
+            with self.subTest(repo=repo), self.fake_network():
+                mentions = self.watcher.find_mentions(notification, "fake", self.now)
+                self.assertEqual(len(mentions), 1)
+                self.assertEqual(mentions[0][1]["repo"], repo)
+                self.assertEqual(mentions[0][1]["author"], "owner")
+                self.item["user"]["login"] = "unapproved-user"
+                self.assertEqual(self.watcher.find_mentions(notification, "fake", self.now), [])
+                self.item["user"]["login"] = "owner"
 
     def test_poll_handoff_is_signed_and_repeated_poll_does_not_duplicate_work(self):
         state = self.watcher.load_state()
@@ -116,6 +126,64 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(state.get("pending"), {})
         self.assertEqual(state.get("active"), {})
         self.assertEqual(self.config.state_file.stat().st_mode & 0o777, 0o600)
+
+    def test_github_only_poll_needs_no_discord_destination_or_progress_database(self):
+        config = replace(self.config, discord_notifications=False, progress=True)
+        watcher = Watcher(config, chat_id_provider=lambda: self.fail("Discord destination must not be read"))
+        state = watcher.load_state()
+        with self.fake_network():
+            watcher.poll("fake", state)
+            watcher.poll("fake", state)
+            watcher.report_active(state)
+        posts = [request for request in self.calls if request.data is not None]
+        self.assertEqual([urlsplit(request.full_url).path for request in posts], ["/webhooks/github-mention-work"])
+        self.assertNotIn("discord_chat_id", json.loads(posts[0].data))
+        self.assertEqual(state["pending"], {})
+        self.assertEqual(state["active"], {})
+        self.assertFalse((self.root / "state.db").exists())
+        routes = build_routes(config)["platforms"]["webhook"]["extra"]["routes"]
+        self.assertEqual(set(routes), {config.work_route, config.other_route})
+        self.assertTrue(all(route["deliver"] == "log" for route in routes.values()))
+
+    def test_discord_notice_failure_does_not_block_following_github_requests(self):
+        state = self.watcher.load_state()
+        first = self.watcher.mention_event(self.item, self.notification, "issue_comment")
+        second = self.watcher.mention_event({**self.item, "body": "@helper-bot please fix tests"},
+                                            self.notification, "issue_comment")
+        with patch.object(self.watcher, "pages", return_value=([self.notification], {})), \
+                patch.object(self.watcher, "find_mentions", return_value=[first, second]), \
+                patch.object(self.watcher, "post_route", side_effect=[None, OSError("Discord offline"), None, None]), \
+                self.assertLogs(level="WARNING"):
+            self.watcher.poll("fake", state)
+        self.assertEqual(state["pending"], {})
+        self.assertTrue(all("github-mention-work" in state["seen"][key] for key, _ in (first, second)))
+
+    def test_retry_keeps_admission_route_and_destination_when_discord_availability_changes(self):
+        enabled, destination = [True], ["888"]
+        watcher = Watcher(self.config, discord_enabled_provider=lambda: enabled[0],
+                          chat_id_provider=lambda: destination[0])
+        state = watcher.load_state()
+        with self.fake_network(), patch.object(watcher, "post_route", side_effect=OSError("acknowledgement lost")):
+            with self.assertRaises(OSError):
+                watcher.poll("fake", state)
+        state = watcher.load_state()
+        enabled[0], destination[0] = False, "999"
+        with patch.object(watcher, "pages", return_value=([], {})), patch.object(watcher, "post_route") as post:
+            watcher.poll("fake", state)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(post.call_args.args[0], self.config.work_route + "-discord")
+        self.assertEqual(post.call_args.args[2]["discord_chat_id"], "888")
+
+    def test_automatic_discord_availability_does_not_replay_old_notices(self):
+        enabled = [False]
+        watcher = Watcher(self.config, discord_enabled_provider=lambda: enabled[0])
+        state = watcher.load_state()
+        with self.fake_network():
+            watcher.poll("fake", state)
+            enabled[0] = True
+            watcher.poll("fake", state)
+        posts = [request for request in self.calls if request.data is not None]
+        self.assertEqual([urlsplit(request.full_url).path for request in posts], ["/webhooks/github-mention-work"])
 
     def test_failed_delivery_is_saved_before_post_and_retried_after_notification_disappears(self):
         state = self.watcher.load_state()
@@ -143,18 +211,17 @@ class WatcherTests(unittest.TestCase):
         with self.fake_network():
             self.watcher.poll("fake", state)
         self.assertEqual([urlsplit(r.full_url).path for r in self.calls if r.data],
-                         ["/webhooks/github-mention-work"])
+                         ["/webhooks/github-mention-work-discord"])
 
     def test_notice_failure_does_not_repeat_accepted_work(self):
         state = self.watcher.load_state()
-        with self.fake_network(), patch.object(self.watcher, "post_route", side_effect=[None, OSError("offline")]):
-            with self.assertRaises(OSError):
-                self.watcher.poll("fake", state)
+        with self.fake_network(), patch.object(self.watcher, "post_route", side_effect=[None, OSError("offline")]), \
+                self.assertLogs(level="WARNING"):
+            self.watcher.poll("fake", state)
         state = self.watcher.load_state()
         with self.fake_network(), patch.object(self.watcher, "post_route") as post:
             self.watcher.poll("fake", state)
-        self.assertEqual(post.call_count, 1)
-        self.assertEqual(post.call_args.args[0], self.config.notice_route)
+        self.assertEqual(post.call_count, 0)
 
     def test_dry_run_has_no_writes_even_on_fresh_bootstrap(self):
         self.item["updated_at"] = iso(self.now - timedelta(minutes=1))
@@ -271,7 +338,7 @@ class WatcherTests(unittest.TestCase):
         work_id = state["active"][key]["work_id"]
         import base64
         chat_id = "webhook:v2:" + base64.urlsafe_b64encode(json.dumps(
-            ("default", self.config.work_route, work_id), separators=(",", ":")
+            ("default", self.config.work_route + "-discord", work_id), separators=(",", ":")
         ).encode()).decode().rstrip("=")
         db.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
                    ("session1", chat_id, "", None, self.now.timestamp(), 3, self.now.timestamp()))
@@ -342,13 +409,14 @@ class WatcherTests(unittest.TestCase):
 
     def test_route_fragment_uses_private_delivery_and_separate_direct_routes(self):
         routes = build_routes(replace(self.config, progress=True), "1234")["platforms"]["webhook"]["extra"]["routes"]
-        for name in (self.config.work_route, self.config.other_route):
+        for name in (self.config.work_route + "-discord", self.config.other_route + "-discord"):
             self.assertEqual(routes[name]["deliver"], "discord")
             self.assertNotIn("deliver_only", routes[name])
             self.assertIn("terminal", routes[name]["toolsets"])
             self.assertEqual(routes[name]["deliver_extra"]["chat_id"], "1234")
         self.assertTrue(routes[self.config.progress_route]["deliver_only"])
         self.assertTrue(routes[self.config.notice_route]["deliver_only"])
+        self.assertEqual(routes[self.config.work_route]["deliver"], "log")
         self.assertEqual(routes[self.config.work_route]["secret"], self.config.secret().decode())
 
     def test_profile_and_custom_port_match_generated_routes(self):
@@ -364,18 +432,19 @@ class WatcherTests(unittest.TestCase):
         routes = build_routes(config)["platforms"]["webhook"]["extra"]["routes"]
         self.assertTrue(all("deliver_extra" not in route for route in routes.values()))
         dynamic = build_routes(config, dynamic_chat_id=True)["platforms"]["webhook"]["extra"]["routes"]
-        self.assertTrue(all(route["deliver_extra"]["chat_id"] == "{discord_chat_id}" for route in dynamic.values()))
+        self.assertTrue(all(route["deliver_extra"]["chat_id"] == "{discord_chat_id}"
+                            for route in dynamic.values() if route["deliver"] == "discord"))
 
     def test_destination_setting_is_resolved_for_each_post_without_mutating_saved_payload(self):
         destination = ["888"]
         watcher = Watcher(self.config, chat_id_provider=lambda: destination[0])
-        payload = {"message": "test", "discord_chat_id": "stale"}
+        payload = {"message": "test"}
         with self.fake_network():
-            watcher.post_route("route", "one", payload, self.config.secret())
+            watcher.post_route(self.config.progress_route, "one", payload, self.config.secret())
             destination[0] = ""
-            watcher.post_route("route", "two", payload, self.config.secret())
+            watcher.post_route(self.config.progress_route, "two", payload, self.config.secret())
         self.assertEqual([json.loads(call.data)["discord_chat_id"] for call in self.calls], ["888", ""])
-        self.assertEqual(payload["discord_chat_id"], "stale")
+        self.assertNotIn("discord_chat_id", payload)
 
     def test_standalone_route_export_does_not_require_channel_id(self):
         path = self.root / "config.toml"
@@ -400,8 +469,7 @@ class WatcherTests(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(main(["--config", str(config_path), "init", "--bot", "helper-bot", "--author", "owner"]), 0)
             output = self.root / "routes.json"
-            self.assertEqual(main(["--config", str(config_path), "routes", "--discord-chat-id", "1234",
-                                   "--output", str(output)]), 0)
+            self.assertEqual(main(["--config", str(config_path), "routes", "--output", str(output)]), 0)
         self.assertEqual(output.stat().st_mode & 0o777, 0o600)
         self.assertFalse(self.config.state_file.exists())
         self.assertFalse((self.root / "config.yaml").exists())

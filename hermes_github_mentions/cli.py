@@ -37,11 +37,11 @@ def initialize(path, bot, authors):
         stream.write(secrets.token_hex(32) + "\n")
     text = (
         f'bot = {json.dumps(bot)}\nallowed_authors = {json.dumps(authors)}\n'
-        'repositories = [] # Optional owner/repo allowlist. Empty means all notified repositories.\n'
         'state_file = "state.json"\nsecret_file = "webhook.secret"\n'
         'token_env = "GITHUB_TOKEN"\n'
         '# token_file = "github-token.secret" # A raw token, used when token_env is unset.\n'
         'webhook_url = "http://127.0.0.1:8644/webhooks"\npoll_seconds = 60\n'
+        'discord_notifications = false # Optional Discord copies of replies and notices.\n'
         'progress = false # Optional, depends on Hermes internal SQLite schema.\n'
         '# hermes_home = "~/.hermes"\n# profile = "default"\n'
     )
@@ -61,12 +61,14 @@ def retry_seconds(exc, minimum):
     return delay
 
 
-def run(config, once=False, dry_run=False, *, token=None, secret_provider=None, chat_id_provider=None):
+def run(config, once=False, dry_run=False, *, token=None, secret_provider=None, chat_id_provider=None,
+        discord_enabled_provider=None):
     token = config.token() if token is None else token
     identity, _ = request_json("https://api.github.com/user", token)
     if str(identity.get("login", "")).lower() != config.bot.lower():
         raise ValueError("GitHub token identity does not match the configured bot")
-    watcher = Watcher(config, secret_provider=secret_provider, chat_id_provider=chat_id_provider)
+    watcher = Watcher(config, secret_provider=secret_provider, chat_id_provider=chat_id_provider,
+                      discord_enabled_provider=discord_enabled_provider)
     if dry_run:
         state = watcher.load_state()
         watcher.poll(token, state, dry_run=True, bootstrap=not config.state_file.exists())
@@ -129,6 +131,8 @@ def main(argv=None):
             return 0
         config = load_config(args.config)
         if args.command == "routes":
+            if args.discord_chat_id and not config.discord_notifications:
+                raise ValueError("Set discord_notifications = true to use a Discord channel override")
             if args.output.exists():
                 raise ValueError("Output already exists; choose a new file")
             if args.output.resolve() in (args.config.resolve(), config.secret_file.resolve(),
