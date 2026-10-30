@@ -185,4 +185,4 @@ For native integration checks, set `HERMES_TEST_ROOT` and `PYTHONPATH` to an exi
 Hermes source root and run its Python, with a disk-backed `TMPDIR` outside this
 checkout. No live credentials are needed. See the [release checks](docs/release-checklist.md).
 
-[MIT licensed](LICENSE). Independent of Nous Research.
+[MIT licensed](LICENSE). Independent of Nous Research..
